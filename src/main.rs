@@ -6,10 +6,12 @@ async fn main() -> async_std::io::Result<()> {
     let mut client = Client::new("127.0.0.1:6379").await?;
     client.set("name".to_string(), "Dogukan".to_string()).await.unwrap();
 
-    let response = client.get("name".to_string()).await.unwrap();
-
-
-    println!("{}", response);
+    if let Some(response) = client.get("name".to_string()).await {
+        println!("{}", response);
+    } else {
+        println!("Can't find value for key: {}", "name");
+    }
+    
 
     Ok(())
 }
@@ -24,13 +26,16 @@ impl Client {
         Ok(Self { stream })
     }
     
-    async fn get(&mut self, key: String) -> Result<String, String> {
+    async fn get(&mut self, key: String) -> Option<String> {
         let command = RespType::Array(vec![
             RespType::BulkString(b"GET".to_vec()),
             RespType::BulkString(key.as_bytes().to_vec())
         ]);
         
-        self.run(command).await
+        match self.run(command).await {
+            Ok(value) => Some(value),
+            Err(_) => None
+        }
     }
 
     async fn set(&mut self, key: String, value: String) -> Result<String, String> {
@@ -66,6 +71,10 @@ impl Client {
             b'-' => Err(String::from(format!("An error occured: {}", &response[1..buffer.len() - 2]))),
             b'+' => Ok(response[1..buffer.len() - 2].to_owned()),
             b'$' => {
+                if let Some(i) = response.find("-1") {
+                    return Err(String::from("Value not exists for given key"));
+                }
+
                 if let Some(i) = response.find("\n") {
                     // return the value after $byte\r\n
                     return Ok(response[i + 1..buffer.len() - 2].to_owned());
