@@ -6,6 +6,11 @@ async fn main() -> async_std::io::Result<()> {
     let mut client = Client::new("127.0.0.1:6379").await?;
     client.set("name".to_string(), "Dogukan".to_string()).await.unwrap();
 
+    let response = client.get("name".to_string()).await.unwrap();
+
+
+    println!("{}", response);
+
     Ok(())
 }
 
@@ -17,6 +22,15 @@ impl Client {
     async fn new<A: ToSocketAddrs>(addr: A) -> Result<Client, async_std::io::Error> {
         let stream = TcpStream::connect(addr).await?;
         Ok(Self { stream })
+    }
+    
+    async fn get(&mut self, key: String) -> Result<String, String> {
+        let command = RespType::Array(vec![
+            RespType::BulkString(b"GET".to_vec()),
+            RespType::BulkString(key.as_bytes().to_vec())
+        ]);
+        
+        self.run(command).await
     }
 
     async fn set(&mut self, key: String, value: String) -> Result<String, String> {
@@ -45,14 +59,22 @@ impl Client {
         if buffer.is_empty() {
             return Err(String::from("Buffer is empty!"));
         }
-    
-        let response = std::str::from_utf8(&buffer[1..buffer.len() - 2]).unwrap();
-    
-        if buffer[0] == '-' as u8 {
-            return Err(String::from(format!("An error occured: {}", response)));
-        }
-    
-        Ok(response.to_owned())
+
+        let response = std::str::from_utf8(&buffer).unwrap();
+
+        return match buffer[0] {
+            b'-' => Err(String::from(format!("An error occured: {}", &response[1..buffer.len() - 2]))),
+            b'+' => Ok(response[1..buffer.len() - 2].to_owned()),
+            b'$' => {
+                if let Some(i) = response.find("\n") {
+                    // return the value after $byte\r\n
+                    return Ok(response[i + 1..buffer.len() - 2].to_owned());
+                }
+
+                return Err(String::from("An error occured while parsing the response"));
+            },
+            _ => Ok(response.to_owned())
+        };
     }
 }
 
